@@ -1,15 +1,7 @@
-# Virtual environment
-venv/
-env/
-ENV/
-
-# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-
-# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -23,27 +15,11 @@ parts/
 sdist/
 var/
 wheels/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
-
-# Environments
+MANIFEST
 .env
 .venv
 env/
@@ -51,31 +27,9 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-
-# IDE
 .vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Project specific
-data/logs/*
-!data/logs/.gitkeep
-screenshots/
-temp/
 *.log
-
-# Model files
-*.pkl
-*.joblib
-models/
+temp/
+screenshots/
+chromedriver.exe
+geckodriver.exe

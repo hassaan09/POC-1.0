@@ -1,80 +1,155 @@
+# src/automation_engine.py
 """
-Automation Engine for executing GUI automation tasks
-Handles various types of automation actions like clicking, typing, web navigation
+Handles browser automation using Selenium
 """
-
-import pyautogui
 import time
 import os
-import subprocess
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 from webdriver_manager.chrome import ChromeDriverManager
-from loguru import logger
-import cv2
-import numpy as np
+from typing import Dict, List, Any, Optional, Callable
+from src.ui_tree_manager import UITreeManager
+from src.utils.config import Config
+from src.utils.logger import setup_logger
+import pandas as pd 
+from selenium.webdriver.common.keys import Keys 
 
 
-
-# Configure PyAutoGUI safety settings
-pyautogui.FAILSAFE = True
-pyautogui.PAUSE = 0.5
+logger = setup_logger(__name__, 'automation_engine.log')
 
 class AutomationEngine:
-    """Executes GUI automation steps"""
-    
-    def __init__(self):
+    def __init__(self, status_callback: Optional[Callable] = None):
         self.driver = None
-        self.current_window = None
-        self.setup_selenium()
+        self.ui_tree_manager = UITreeManager()
+        self.status_callback = status_callback
+        self.current_step = 0
+        self.total_steps = 0
+        
+    def update_status(self, message: str, step: int = None):
+        """Update status and call callback if provided"""
+        if step is not None:
+            self.current_step = step
+        
+        status_msg = f"Step {self.current_step}/{self.total_steps}: {message}"
+        logger.info(status_msg)
+        
+        if self.status_callback:
+            self.status_callback(status_msg)
     
-    def setup_selenium(self):
-        """Setup Selenium WebDriver for web automation"""
+    def setup_driver(self):
+        """Setup Chrome WebDriver"""
         try:
             chrome_options = Options()
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--start-maximized")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
             
-            # We'll use manually downloaded ChromeDriver for compatibility
-            # service = Service(executable_path="./chromedriver.exe")
+            # Setup Chrome driver
             service = Service(ChromeDriverManager().install())
-
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
             
-            logger.info("Selenium WebDriver initialized successfully")
+            # Configure driver
+            self.driver.implicitly_wait(Config.IMPLICIT_WAIT)
+            self.driver.maximize_window()
+            
+            # Execute script to remove automation indicators
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            logger.info("Chrome WebDriver setup completed")
             
         except Exception as e:
-            logger.error(f"Error setting up Selenium: {e}")
-            self.driver = None
+            logger.error(f"Error setting up WebDriver: {e}")
+            raise
     
-    def execute_step(self, step):
-        """Execute a single automation step"""
+    def execute_task(self, execution_plan: Dict[str, Any]) -> bool:
+        """Execute a task based on execution plan"""
         try:
-            action_type = step.get('action', '').lower()
-            selector = step.get('selector', '')
-            parameters = step.get('parameters', {})
+            if not execution_plan or execution_plan.get('status') != 'ready':
+                logger.error("Invalid execution plan")
+                return False
             
-            logger.info(f"Executing step: {step.get('description', 'Unknown')}")
+            steps = execution_plan.get('steps', [])
+            dynamic_values = execution_plan.get('dynamic_values', {})
+            task_info = execution_plan.get('task_info', {})
             
-            if action_type == 'web_navigate':
-                return self.web_navigate(selector, parameters)
+            if not steps:
+                logger.error("No steps found in execution plan")
+                return False
+            
+            self.total_steps = len(steps)
+            self.current_step = 0
+            
+            # Setup driver
+            self.update_status("Setting up browser...")
+            self.setup_driver()
+            
+            # Execute each step
+            for i, step in enumerate(steps, 1):
+                self.update_status(f"Executing: {step.get('description', 'Unknown step')}", i)
+                
+                success = self.execute_step(step, dynamic_values, task_info)
+                if not success:
+                    logger.error(f"Step {i} failed: {step}")
+                    return False
+                
+                # Small delay between steps
+                time.sleep(1)
+            
+            self.update_status("Task completed successfully!")
+            logger.info("Task execution completed successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error executing task: {e}")
+            self.update_status(f"Error: {str(e)}")
+            return False
+        finally:
+            # Keep browser open for demonstration
+            if self.driver:
+                self.update_status("Task finished - browser remains open for review")
+    
+    def execute_step(self, step: Dict[str, Any], dynamic_values: Dict[str, str], task_info: Dict[str, Any]) -> bool:
+        """Execute a single step"""
+        try:
+            action_type = step.get('action_type', '').lower()
+            target_element = step.get('target_element', '')
+
+            action_value_raw = step.get('action_value', '')
+
+            # Convert NaN or None to an empty string; otherwise, ensure it's a string
+            if pd.isna(action_value_raw) or action_value_raw is None:
+                action_value = ''
+            else:
+                action_value = str(action_value_raw)
+            
+            # Replace dynamic values in action_value
+            if action_value:
+                for key, value in dynamic_values.items():
+                    action_value = action_value.replace(f'{{{key}}}', value)
+            
+            if action_type == 'navigate':
+                return self.navigate_to_url(action_value or target_element)
+            
             elif action_type == 'click':
-                return self.click_element(selector, parameters)
+                return self.click_element(target_element)
+            
             elif action_type == 'type':
-                return self.type_text(selector, parameters)
-            elif action_type == 'form_fill':
-                return self.fill_form(selector, parameters)
-            elif action_type == 'app_launch':
-                return self.launch_application(selector, parameters)
-            elif action_type == 'file_open':
-                return self.open_file(selector, parameters)
+                # Determine what to type based on the target element and dynamic values
+                text_to_type = self.get_text_to_type(target_element, dynamic_values, action_value)
+                return self.type_text(target_element, text_to_type)
+            
             elif action_type == 'wait':
-                return self.wait_for_element(selector, parameters)
+                wait_time = int(action_value) if action_value.isdigit() else 3
+                time.sleep(wait_time)
+                return True
+            
             else:
                 logger.warning(f"Unknown action type: {action_type}")
                 return False
@@ -83,278 +158,162 @@ class AutomationEngine:
             logger.error(f"Error executing step: {e}")
             return False
     
-    def web_navigate(self, url, parameters=None):
-        """Navigate to a web URL"""
+    def navigate_to_url(self, url: str) -> bool:
+        """Navigate to a URL"""
         try:
-            if not self.driver:
-                logger.error("WebDriver not available")
+            if not url:
+                logger.error("No URL provided for navigation")
                 return False
             
-            # Handle URL parameter substitution
-            if parameters and 'url' in parameters:
-                url = parameters['url']
-            
-            # Ensure URL has protocol
-            if not url.startswith(('http://', 'https://')):
-                url = 'https://' + url
-            
+            logger.info(f"Navigating to: {url}")
             self.driver.get(url)
-            logger.info(f"Navigated to: {url}")
             
             # Wait for page to load
-            WebDriverWait(self.driver, 10).until(
+            WebDriverWait(self.driver, Config.SELENIUM_TIMEOUT).until(
                 lambda driver: driver.execute_script("return document.readyState") == "complete"
             )
             
             return True
             
         except Exception as e:
-            logger.error(f"Error navigating to URL: {e}")
+            logger.error(f"Error navigating to URL {url}: {e}")
             return False
     
-    def click_element(self, selector, parameters=None):
-        """Click on an element using CSS selector or coordinates"""
+    def find_element(self, element_id: str) -> Optional[Any]:
+        """Find element using selector from UI mappings"""
         try:
-            if self.driver and selector.startswith(('div', 'button', 'a', 'input', '.')):
-                # Web element click using Selenium
-                return self.click_web_element(selector, parameters)
+            selector_info = self.ui_tree_manager.get_element_selector(element_id)
+            
+            if not selector_info:
+                logger.error(f"No selector found for element: {element_id}")
+                return None
+            
+            selector_type = selector_info.get('selector_type', '').lower()
+            selector_value = selector_info.get('selector_value', '')
+            
+            wait = WebDriverWait(self.driver, Config.SELENIUM_TIMEOUT)
+            
+            if selector_type == 'xpath':
+                element = wait.until(EC.presence_of_element_located((By.XPATH, selector_value)))
+            elif selector_type == 'id':
+                element = wait.until(EC.presence_of_element_located((By.ID, selector_value)))
+            elif selector_type == 'name':
+                element = wait.until(EC.presence_of_element_located((By.NAME, selector_value)))
+            elif selector_type == 'class':
+                element = wait.until(EC.presence_of_element_located((By.CLASS_NAME, selector_value)))
+            elif selector_type == 'css':
+                element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector_value)))
             else:
-                # Desktop element click using PyAutoGUI
-                return self.click_desktop_element(selector, parameters)
-                
+                logger.error(f"Unsupported selector type: {selector_type}")
+                return None
+            
+            return element
+            
+        except TimeoutException:
+            logger.error(f"Element not found within timeout: {element_id}")
+            return None
         except Exception as e:
-            logger.error(f"Error clicking element: {e}")
-            return False
+            logger.error(f"Error finding element {element_id}: {e}")
+            return None
     
-    def click_web_element(self, selector, parameters=None):
-        """Click web element using Selenium"""
+    def click_element(self, element_id: str) -> bool:
+        """Click an element"""
         try:
-            if not self.driver:
+            element = self.find_element(element_id)
+            if not element:
                 return False
             
             # Wait for element to be clickable
-            element = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-            )
+            wait = WebDriverWait(self.driver, Config.SELENIUM_TIMEOUT)
+            clickable_element = wait.until(EC.element_to_be_clickable(element))
             
-            # Scroll element into view
-            self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
+            # Scroll to element
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", clickable_element)
             time.sleep(0.5)
             
-            # Click the element
-            element.click()
-            logger.info(f"Clicked web element: {selector}")
+            # Click element
+            clickable_element.click()
+            logger.info(f"Clicked element: {element_id}")
             
             return True
             
         except Exception as e:
-            logger.error(f"Error clicking web element: {e}")
+            logger.error(f"Error clicking element {element_id}: {e}")
             return False
     
-    def click_desktop_element(self, selector, parameters=None):
-        """Click desktop element using PyAutoGUI"""
+    def type_text(self, element_id: str, text: str) -> bool:
+        """Type text into an element"""
         try:
-            # If selector contains coordinates
-            if ',' in selector:
-                coords = selector.split(',')
-                x, y = int(coords[0]), int(coords[1])
-                pyautogui.click(x, y)
-                logger.info(f"Clicked at coordinates: ({x}, {y})")
+            if not text:
+                logger.warning(f"No text to type for element: {element_id}")
                 return True
             
-            # Try to find element by image or text
-            return self.find_and_click_by_image(selector, parameters)
-            
-        except Exception as e:
-            logger.error(f"Error clicking desktop element: {e}")
-            return False
-    
-    def find_and_click_by_image(self, image_path, parameters=None):
-        """Find and click element by image recognition"""
-        try:
-            # This is a placeholder for image recognition
-            # In a full implementation, you would use OpenCV or similar
-            # to find UI elements by screenshot comparison
-            
-            logger.warning("Image-based clicking not fully implemented")
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error in image-based clicking: {e}")
-            return False
-    
-    def type_text(self, selector, parameters=None):
-        """Type text into an input field"""
-        try:
-            text_to_type = parameters.get('text', '') if parameters else ''
-            
-            if self.driver and selector.startswith(('input', 'textarea', '.')):
-                # Web input using Selenium
-                return self.type_web_text(selector, text_to_type)
-            else:
-                # Desktop input using PyAutoGUI
-                return self.type_desktop_text(text_to_type)
-                
-        except Exception as e:
-            logger.error(f"Error typing text: {e}")
-            return False
-    
-    def type_web_text(self, selector, text):
-        """Type text in web input field"""
-        try:
-            if not self.driver:
+            element = self.find_element(element_id)
+            if not element:
                 return False
             
-            element = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-            )
-            
-            # Clear existing text and type new text
+            # Clear existing text
             element.clear()
+            
+            # Type new text
             element.send_keys(text)
-            logger.info(f"Typed text in web element: {selector}")
+            logger.info(f"Typed text into {element_id}: {text}")
+
+            # CUSTOM ADDITION: Press ENTER key after typing
+            element.send_keys(Keys.ENTER)
+            logger.info(f"Pressed ENTER key after typing into {element_id}")
+            # --- END ADDITION ---
             
             return True
             
         except Exception as e:
-            logger.error(f"Error typing in web element: {e}")
+            logger.error(f"Error typing text into element {element_id}: {e}")
             return False
     
-    def type_desktop_text(self, text):
-        """Type text using PyAutoGUI"""
-        try:
-            pyautogui.typewrite(text, interval=0.05)
-            logger.info(f"Typed text: {text}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error typing desktop text: {e}")
-            return False
+    def get_text_to_type(self, target_element: str, dynamic_values: Dict[str, str], action_value: str) -> str:
+        """Determine what text to type based on element and available values"""
+        # If action_value is provided, use it
+        if action_value:
+            return action_value
+        
+        # Map target elements to dynamic values
+        element_mapping = {
+            'recipient_field': 'recipient_email',
+            'subject_field': 'email_subject',
+            'search_box': 'search_query',
+            'message_body': 'email_message'
+        }
+        
+        # Get the corresponding dynamic value
+        dynamic_key = element_mapping.get(target_element, '')
+        if dynamic_key and dynamic_key in dynamic_values:
+            return dynamic_values[dynamic_key]
+        
+        # Default values for common elements
+        default_values = {
+            'message_body': 'Hello, I hope this message finds you well.',
+            'email_subject': 'Inquiry',
+            'search_query': 'information'
+        }
+        
+        return default_values.get(target_element, '')
     
-    def fill_form(self, selector, parameters=None):
-        """Fill out a form with multiple fields"""
-        try:
-            if not parameters:
-                return False
-            
-            # Handle email form filling
-            if 'recipient' in parameters:
-                return self.fill_email_form(parameters)
-            
-            # Handle other form types
-            return self.fill_generic_form(selector, parameters)
-            
-        except Exception as e:
-            logger.error(f"Error filling form: {e}")
-            return False
-    
-    def fill_email_form(self, parameters):
-        """Fill Gmail compose form"""
-        try:
-            if not self.driver:
-                return False
-            
-            # Wait for compose window to load
-            time.sleep(2)
-            
-            # Fill recipient
-            if 'recipient' in parameters:
-                recipient_field = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, 'input[peoplekit-id="To"]'))
-                )
-                recipient_field.send_keys(parameters['recipient'])
-            
-            # Fill subject
-            if 'subject' in parameters:
-                subject_field = self.driver.find_element(By.CSS_SELECTOR, 'input[name="subjectbox"]')
-                subject_field.send_keys(parameters['subject'])
-            
-            # Fill body
-            if 'body' in parameters:
-                body_field = self.driver.find_element(By.CSS_SELECTOR, 'div[role="textbox"]')
-                body_field.send_keys(parameters['body'])
-            
-            logger.info("Email form filled successfully")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error filling email form: {e}")
-            return False
-    
-    def fill_generic_form(self, selector, parameters):
-        """Fill generic form fields"""
-        try:
-            # Implementation for generic form filling
-            logger.info("Generic form filling not fully implemented")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error filling generic form: {e}")
-            return False
-    
-    def launch_application(self, app_path, parameters=None):
-        """Launch a desktop application"""
-        try:
-            if app_path.lower() == 'explorer.exe':
-                subprocess.Popen('explorer.exe')
-            else:
-                subprocess.Popen(app_path)
-            
-            logger.info(f"Launched application: {app_path}")
-            time.sleep(2)  # Wait for app to start
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error launching application: {e}")
-            return False
-    
-    def open_file(self, file_path, parameters=None):
-        """Open a file with default application"""
-        try:
-            if parameters and 'filename' in parameters:
-                file_path = parameters['filename']
-            
-            os.startfile(file_path)
-            logger.info(f"Opened file: {file_path}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error opening file: {e}")
-            return False
-    
-    def wait_for_element(self, selector, parameters=None):
-        """Wait for an element to appear"""
-        try:
-            wait_time = parameters.get('timeout', 5) if parameters else 5
-            
-            if self.driver and selector.startswith(('div', 'button', 'input', '.')):
-                WebDriverWait(self.driver, wait_time).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                )
-            else:
-                time.sleep(wait_time)
-            
-            logger.info(f"Waited for element: {selector}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error waiting for element: {e}")
-            return False
-    
-    def take_screenshot(self, filename=None):
-        """Take a screenshot for debugging"""
+    def take_screenshot(self, filename: str = None) -> str:
+        """Take a screenshot of current browser state"""
         try:
             if not filename:
-                filename = f"screenshot_{int(time.time())}.png"
+                timestamp = int(time.time())
+                filename = f"screenshot_{timestamp}.png"
             
-            screenshot = pyautogui.screenshot()
-            screenshot.save(filename)
-            logger.info(f"Screenshot saved: {filename}")
-            return filename
+            filepath = os.path.join(Config.SCREENSHOTS_DIR, filename)
+            self.driver.save_screenshot(filepath)
+            logger.info(f"Screenshot saved: {filepath}")
+            
+            return filepath
             
         except Exception as e:
             logger.error(f"Error taking screenshot: {e}")
-            return None
+            return ""
     
     def cleanup(self):
         """Clean up resources"""
@@ -362,10 +321,5 @@ class AutomationEngine:
             if self.driver:
                 self.driver.quit()
                 logger.info("WebDriver closed")
-                
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
-    
-    def __del__(self):
-        """Destructor to ensure cleanup"""
-        self.cleanup()
