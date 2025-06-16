@@ -36,7 +36,7 @@ To get started with **Shiza POC 1.0**, follow the steps below:
     python main.py
 
 ## Flow Diagram
-    ![Flow Diagram](<Flow Diagram 2.0.PNG>)
+   ![alt text](<Flow Diagram 2.0.PNG>) 
 
 ## Natural Language Pseudocode
 
