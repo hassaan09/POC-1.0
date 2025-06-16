@@ -117,8 +117,8 @@ def create_interface():
                 
                 # Voice input
                 voice_input = gr.Audio(
+                    sources="microphone",
                     label="Voice Input",
-                    source="microphone",
                     type="filepath"
                 )
                 
@@ -186,11 +186,10 @@ def create_interface():
         interface.load(
             fn=automation_system.get_live_log,
             outputs=automation_log,
-            every=2
         )
     
     return interface
 
 if __name__ == "__main__":
     interface = create_interface()
-    interface.launch()
+    interface.launch(share=True)

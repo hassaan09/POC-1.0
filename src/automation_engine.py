@@ -12,10 +12,13 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from loguru import logger
 import cv2
 import numpy as np
+
+
 
 # Configure PyAutoGUI safety settings
 pyautogui.FAILSAFE = True
@@ -37,11 +40,11 @@ class AutomationEngine:
             chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--start-maximized")
             
-            # Initialize Chrome driver
-            self.driver = webdriver.Chrome(
-                service=webdriver.chrome.service.Service(ChromeDriverManager().install()),
-                options=chrome_options
-            )
+            # We'll use manually downloaded ChromeDriver for compatibility
+            # service = Service(executable_path="./chromedriver.exe")
+            service = Service(ChromeDriverManager().install())
+
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
             
             logger.info("Selenium WebDriver initialized successfully")
             

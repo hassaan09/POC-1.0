@@ -263,4 +263,126 @@ class DemoParser:
             x, y = step['coordinates']
             
             descriptions = {
-                'click':
+                'click': f'Click at position ({x}, {y})',
+                'navigate': f'Navigate to new location at ({x}, {y})',
+                'type': f'Type text near position ({x}, {y})',
+                'interact': f'Interact with element at ({x}, {y})',
+                'unknown': f'Perform action at ({x}, {y})'
+            }
+            
+            return descriptions.get(action_type, f'Perform {action_type} at ({x}, {y})')
+            
+        except Exception as e:
+            logger.error(f"Error generating step description: {e}")
+            return "Unknown action"
+    
+    def save_extracted_steps(self, steps, output_path):
+        """Save extracted steps to JSON file"""
+        try:
+            # Ensure output directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # Convert steps to JSON-serializable format
+            json_steps = []
+            for step in steps:
+                json_step = {
+                    'step_order': step.get('step_order', 0),
+                    'action_type': step.get('action_type', 'unknown'),
+                    'description': step.get('description', ''),
+                    'coordinates': step.get('coordinates', (0, 0)),
+                    'region': step.get('region', {}),
+                    'confidence': step.get('confidence', 0.0),
+                    'timestamp': step.get('timestamp', 0)
+                }
+                json_steps.append(json_step)
+            
+            # Save to JSON file
+            with open(output_path, 'w') as f:
+                json.dump({
+                    'total_steps': len(json_steps),
+                    'extraction_metadata': {
+                        'parser_version': '1.0',
+                        'extraction_method': 'frame_difference'
+                    },
+                    'steps': json_steps
+                }, f, indent=2)
+            
+            logger.info(f"Extracted steps saved to: {output_path}")
+            
+        except Exception as e:
+            logger.error(f"Error saving extracted steps: {e}")
+    
+    def load_extracted_steps(self, input_path):
+        """Load previously extracted steps from JSON file"""
+        try:
+            if not os.path.exists(input_path):
+                logger.error(f"Input file not found: {input_path}")
+                return []
+            
+            with open(input_path, 'r') as f:
+                data = json.load(f)
+            
+            steps = data.get('steps', [])
+            logger.info(f"Loaded {len(steps)} steps from: {input_path}")
+            
+            return steps
+            
+        except Exception as e:
+            logger.error(f"Error loading extracted steps: {e}")
+            return []
+    
+    def convert_to_ui_tree_format(self, extracted_steps, action_id, action_name):
+        """Convert extracted steps to UI Tree format for integration"""
+        try:
+            ui_tree_steps = []
+            
+            for i, step in enumerate(extracted_steps):
+                ui_step = {
+                    'step_id': i + 1,
+                    'order': step.get('step_order', i + 1),
+                    'description': step.get('description', f'Step {i + 1}'),
+                    'action': self.map_action_type_to_ui_tree(step.get('action_type', 'unknown')),
+                    'selector': self.generate_selector_from_coordinates(step.get('coordinates', (0, 0))),
+                    'parameters': self.extract_parameters_from_step(step)
+                }
+                ui_tree_steps.append(ui_step)
+            
+            ui_tree_action = {
+                'action_id': action_id,
+                'action_name': action_name,
+                'category': 'extracted',
+                'keywords': ['extracted', 'demo', 'recorded'],
+                'difficulty': 3,
+                'steps': ui_tree_steps
+            }
+            
+            return ui_tree_action
+            
+        except Exception as e:
+            logger.error(f"Error converting to UI tree format: {e}")
+            return None
+    
+    def map_action_type_to_ui_tree(self, action_type):
+        """Map extracted action types to UI tree action types"""
+        mapping = {
+            'click': 'click',
+            'type': 'type',
+            'navigate': 'web_navigate',
+            'interact': 'click',
+            'unknown': 'click'
+        }
+        return mapping.get(action_type, 'click')
+    
+    def generate_selector_from_coordinates(self, coordinates):
+        """Generate selector string from coordinates"""
+        x, y = coordinates
+        return f"{x},{y}"
+    
+    def extract_parameters_from_step(self, step):
+        """Extract parameters from step for UI tree format"""
+        parameters = {}
+        
+        if step.get('action_type') == 'type':
+            parameters['text'] = 'text_parameter'  # Placeholder
+        
+        return parameters
